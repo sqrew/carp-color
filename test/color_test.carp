@@ -1,0 +1,43 @@
+(load "Test.carp")
+(use Test)
+(load "color.carp")
+(use Color)
+
+(defn approx [a b]
+  (< (Double.abs (- a b)) 0.000001))
+
+(deftest color-test
+  (let [red-rgb (Color.red)
+        red-hsl (Color.rgb-to-hsl &red-rgb)
+        
+        s1 (assert-equal color-test 1.0 @(RGB.r &red-rgb) "red is 1.0 red")
+        s2 (assert-equal &s1 0.0 @(HSL.h &red-hsl) "red hue is 0.0")
+        s3 (assert-equal &s2 1.0 @(HSL.s &red-hsl) "red saturation is 1.0")
+        s4 (assert-equal &s3 0.5 @(HSL.l &red-hsl) "red lightness is 0.5")
+
+        ;; Roundtrip
+        red-back (Color.hsl-to-rgb &red-hsl)
+        s5 (assert-true &s4 (approx @(RGB.r &red-back) 1.0) "HSL roundtrip R")
+        s6 (assert-true &s5 (approx @(RGB.g &red-back) 0.0) "HSL roundtrip G")
+        s7 (assert-true &s6 (approx @(RGB.b &red-back) 0.0) "HSL roundtrip B")
+
+        ;; Byte conversion
+        gray (Color.from-bytes 128 128 128)
+        gray-bytes (Color.to-bytes &gray)
+        s8 (assert-equal &s7 128 @(unsafe-nth &gray-bytes 0) "byte conversion R")
+        
+        ;; Lerp
+        mid (Color.lerp &(Color.black) &(Color.white) 0.5)
+        s9 (assert-true &s8 (approx @(RGB.r &mid) 0.5) "lerp works")
+        
+        ;; Hex
+        s10 (assert-equal &s9 "#ff0000" &(Color.to-hex &(Color.red)) "to-hex red")
+        s11 (assert-equal &s10 "#00ff00" &(Color.to-hex &(Color.green)) "to-hex green")
+
+        red-from-hex (Color.from-hex "#ff0000")
+        s12 (assert-true &s11 (Result.success? &red-from-hex) "from-hex success")
+        rfh (Result.unsafe-from-success red-from-hex)
+        s13 (assert-true &s12 (approx @(RGB.r &rfh) 1.0) "from-hex red R")
+        s14 (assert-true &s13 (approx @(RGB.g &rfh) 0.0) "from-hex red G")
+        ]
+    s14))

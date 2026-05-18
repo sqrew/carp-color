@@ -1,0 +1,148 @@
+(use Double)
+
+(deftype RGB  [r Double, g Double, b Double])
+(deftype RGBA [r Double, g Double, b Double, a Double])
+(deftype HSL  [h Double, s Double, l Double])
+
+(defmodule Color
+  (defn rgb [r g b] (RGB.init r g b))
+  (defn rgba [r g b a] (RGBA.init r g b a))
+  (defn hsl [h s l] (HSL.init h s l))
+
+  ;; Standard Constants (0.0 - 1.0)
+  (defn white [] (rgb 1.0 1.0 1.0))
+  (defn black [] (rgb 0.0 0.0 0.0))
+  (defn red   [] (rgb 1.0 0.0 0.0))
+  (defn green [] (rgb 0.0 1.0 0.0))
+  (defn blue  [] (rgb 0.0 0.0 1.0))
+
+  ;; Utilities
+  (defn clamp [v]
+    (if (< v 0.0) 0.0 (if (> v 1.0) 1.0 v)))
+
+  (defn to-rgba [c a]
+    (RGBA.init @(RGB.r c) @(RGB.g c) @(RGB.b c) a))
+
+  (defn strip-alpha [c]
+    (RGB.init @(RGBA.r c) @(RGBA.g c) @(RGBA.b c)))
+
+  ;; Byte Helpers (0-255)
+  (defn from-bytes [r g b]
+    (rgb (/ (Double.from-int r) 255.0)
+         (/ (Double.from-int g) 255.0)
+         (/ (Double.from-int b) 255.0)))
+
+  (defn to-bytes [c]
+    [(Double.to-int (* @(RGB.r c) 255.0))
+     (Double.to-int (* @(RGB.g c) 255.0))
+     (Double.to-int (* @(RGB.b c) 255.0))])
+
+  ;; Basic Manipulation
+  (defn lerp [a b t]
+    (rgb (+ @(RGB.r a) (* t (- @(RGB.r b) @(RGB.r a))))
+         (+ @(RGB.g a) (* t (- @(RGB.g b) @(RGB.g a))))
+         (+ @(RGB.b a) (* t (- @(RGB.b b) @(RGB.b a))))))
+
+  (defn rgb-to-hsl [c]
+    (let [r @(RGB.r c)
+          g @(RGB.g c)
+          b @(RGB.b c)
+          mx (max (max r g) b)
+          mn (min (min r g) b)
+          l (/ (+ mx mn) 2.0)
+          h 0.0
+          s 0.0]
+      (if (= mx mn)
+          (hsl 0.0 0.0 l) ; achromatic
+          (let [d (- mx mn)
+                s (if (> l 0.5) (/ d (- (- 2.0 mx) mn)) (/ d (+ mx mn)))
+                h (cond
+                    (= mx r) (+ (/ (- g b) d) (if (< g b) 6.0 0.0))
+                    (= mx g) (+ (/ (- b r) d) 2.0)
+                    (+ (/ (- r g) d) 4.0))]
+            (hsl (/ h 6.0) s l)))))
+
+  (hidden hue-to-rgb)
+  (defn hue-to-rgb [p q t]
+    (let [t1 (if (< t 0.0) (+ t 1.0) (if (> t 1.0) (- t 1.0) t))]
+      (cond
+        (< t1 (/ 1.0 6.0)) (+ p (* (* (- q p) 6.0) t1))
+        (< t1 0.5) q
+        (< t1 (/ 2.0 3.0)) (+ p (* (* (- q p) (- (/ 2.0 3.0) t1)) 6.0))
+        p)))
+
+  (defn hsl-to-rgb [c]
+    (let [h @(HSL.h c)
+          s @(HSL.s c)
+          l @(HSL.l c)]
+      (if (= s 0.0)
+          (rgb l l l) ; achromatic
+          (let [q (if (< l 0.5) (* l (+ 1.0 s)) (- (+ l s) (* l s)))
+                p (- (* 2.0 l) q)]
+            (rgb (hue-to-rgb p q (+ h (/ 1.0 3.0)))
+                 (hue-to-rgb p q h)
+                 (hue-to-rgb p q (- h (/ 1.0 3.0))))))))
+
+  ;; Manipulation
+  (defn lighten [c amount]
+    (let [h (rgb-to-hsl c)]
+      (hsl-to-rgb &(HSL.set-l h (clamp (+ @(HSL.l &h) amount))))))
+
+  (defn darken [c amount]
+    (lighten c (neg amount)))
+
+  (defn saturate [c amount]
+    (let [h (rgb-to-hsl c)]
+      (hsl-to-rgb &(HSL.set-s h (clamp (+ @(HSL.s &h) amount))))))
+
+  (defn desaturate [c amount]
+    (saturate c (neg amount)))
+
+  ;; Hex Strings
+  (defn to-hex [c]
+    (let [bytes (to-bytes c)
+          r (unsafe-nth &bytes 0)
+          g (unsafe-nth &bytes 1)
+          b (unsafe-nth &bytes 2)]
+      (fmt "#%02x%02x%02x" @r @g @b)))
+
+  (hidden hex-char-to-int)
+  (defn hex-char-to-int [c]
+    (cond
+      (and (>= @c \0) (<= @c \9)) (Just (- (Char.to-int @c) (Char.to-int \0)))
+      (and (>= @c \a) (<= @c \f)) (Just (+ 10 (- (Char.to-int @c) (Char.to-int \a))))
+      (and (>= @c \A) (<= @c \F)) (Just (+ 10 (- (Char.to-int @c) (Char.to-int \A))))
+      (Nothing)))
+
+  (hidden hex-to-int)
+  (defn hex-to-int [s]
+    (let [len (String.length s)
+          res 0]
+      (do
+        (for [i 0 len]
+          (match (hex-char-to-int (ref (String.char-at s i)))
+            (Just v) (set! res (+ (* res 16) v))
+            (Nothing) (do (set! res -1) (break))))
+        (if (< res 0) (Nothing) (Just res)))))
+
+  (defn from-hex [s]
+    (let [clean (if (= (String.char-at s 0) \#) (String.suffix s 1) @s)]
+      (if (not (= (String.length &clean) 6))
+          (Error @"Invalid hex length (expected 6)")
+          (let [r-str (String.slice &clean 0 2)
+                g-str (String.slice &clean 2 4)
+                b-str (String.slice &clean 4 6)
+                r (the (Maybe Int) (hex-to-int &r-str))
+                g (the (Maybe Int) (hex-to-int &g-str))
+                b (the (Maybe Int) (hex-to-int &b-str))]
+            (match r
+              (Nothing) (Error @"Failed to parse Red hex")
+              (Just rv)
+                (match g
+                  (Nothing) (Error @"Failed to parse Green hex")
+                  (Just gv)
+                    (match b
+                      (Nothing) (Error @"Failed to parse Blue hex")
+                      (Just bv) (Success (from-bytes rv gv bv)))))))))
+
+)
